@@ -1,0 +1,21 @@
+t=2026-01-13T12:30:37-0500 lvl=info msg="no configuration paths supplied"
+t=2026-01-13T12:30:37-0500 lvl=info msg="using configuration at default config path" path=/home/barak/.config/ngrok/ngrok.yml
+t=2026-01-13T12:30:37-0500 lvl=info msg="open config file" path=/home/barak/.config/ngrok/ngrok.yml err=nil
+t=2026-01-13T12:30:37-0500 lvl=info msg="FIPS 140 mode" enabled=false
+t=2026-01-13T12:30:37-0500 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2026-01-13T12:30:38-0500 lvl=info msg="client session established" obj=tunnels.session
+t=2026-01-13T12:30:38-0500 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2026-01-13T12:30:38-0500 lvl=info msg="started tunnel" obj=tunnels name=command_line addr=http://localhost:5000 url=https://sana-expensive-jere.ngrok-free.dev
+t=2026-01-13T12:30:42-0500 lvl=info msg=start pg=/api/tunnels id=abdda2ca6767a1bb
+t=2026-01-13T12:30:42-0500 lvl=info msg=end pg=/api/tunnels id=abdda2ca6767a1bb status=200 dur=596.984µs
+t=2026-01-13T12:30:50-0500 lvl=info msg=start pg=/api/tunnels id=d3e61ef723dff1d8
+t=2026-01-13T12:30:50-0500 lvl=info msg=end pg=/api/tunnels id=d3e61ef723dff1d8 status=200 dur=384.078µs
+t=2026-01-13T12:30:50-0500 lvl=info msg=start pg=/favicon.ico id=685e63ac1488af9b
+t=2026-01-13T12:30:50-0500 lvl=warn msg="Not Found" pg=/favicon.ico id=685e63ac1488af9b path=/favicon.ico
+t=2026-01-13T12:30:50-0500 lvl=info msg=end pg=/favicon.ico id=685e63ac1488af9b status=404 dur=502.475µs
+t=2026-01-13T12:31:11-0500 lvl=info msg=start pg=/api/tunnels id=f15d0c4ebcd87b3f
+t=2026-01-13T12:31:11-0500 lvl=info msg=end pg=/api/tunnels id=f15d0c4ebcd87b3f status=200 dur=415.948µs
+t=2026-01-13T12:33:12-0500 lvl=info msg="join connections" obj=join id=ef54bbd143f7 l=127.0.0.1:5000 r=3.82.119.20:50846
+t=2026-01-13T12:33:27-0500 lvl=info msg="join connections" obj=join id=7dde33c71930 l=127.0.0.1:5000 r=52.207.227.170:27574
+t=2026-01-13T12:36:55-0500 lvl=info msg="join connections" obj=join id=3c252bda2d17 l=127.0.0.1:5000 r=98.93.89.58:55182
+t=2026-01-13T12:37:14-0500 lvl=info msg="join connections" obj=join id=98e387a877bc l=127.0.0.1:5000 r=98.93.241.244:43396
