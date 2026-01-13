@@ -4,3 +4,15 @@ credentials.json
 token.json
 __pycache__/
 *.pyc
+
+# Logs and databases
+*.log
+*.db
+uploads/
+
+# Binaries and Environment
+ngrok
+ngrok-v3-stable-linux-amd64.tgz
+.venv/
+node_modules/
+.DS_Store
