@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dermaglow - Gestión de Tratamientos</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@300;400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1a1a1a;
+            --accent: #d4af37;
+            /* Rich Gold */
+            --accent-light: #f9f1d8;
+            --bg: #f3f4f6;
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.6);
+            --text: #2d2d2d;
+            --text-muted: #6b7280;
+            --danger: #ef4444;
+            --radius: 16px;
+            --shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(212, 175, 55, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(212, 175, 55, 0.05) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1,
+        h2,
+        h3 {
+            font-family: 'Outfit', sans-serif;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #333 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        .btn-danger:hover {
+            background-color: rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: var(--glass-border);
+            border-radius: var(--radius);
+            padding: 32px;
+            box-shadow: var(--shadow);
+            margin-bottom: 30px;
+            transition: transform 0.3s ease;
+        }
+
+        /* Floating effect for list items, not the main form card */
+        .treatment-item-card {
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .treatment-item-card:hover {
+            transform: translateY(-4px);
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.06);
+            border-color: rgba(212, 175, 55, 0.3);
+        }
+
+        .treatment-item-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: linear-gradient(to bottom, var(--accent), transparent);
+            opacity: 0.5;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            font-size: 13px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 14px;
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            font-family: inherit;
+            box-sizing: border-box;
+            background: rgba(255, 255, 255, 0.5);
+            transition: all 0.3s;
+            font-size: 15px;
+            color: var(--primary);
+        }
+
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.1);
+        }
+
+        /* Chips for Benefits */
+        .chip-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .chip {
+            background-color: var(--accent-light);
+            color: #8a6d1c;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .chip::before {
+            content: '✨';
+            margin-right: 4px;
+            font-size: 10px;
+        }
+
+        /* Pill tags for stats */
+        .stat-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.04);
+            border-radius: 8px;
+            font-size: 13px;
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        .stat-icon {
+            color: var(--text-muted);
+        }
+
+        .price-badge {
+            background: var(--primary);
+            color: var(--accent);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+            font-size: 14px;
+            border-left: 4px solid #0284c7;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 30px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .back-link:hover {
+            color: var(--primary);
+        }
+
+        ::placeholder {
+            color: #aaa;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Gestión de Tratamientos</h1>
+            <a href="/admin/upload" class="btn btn-primary">📂 Base de Conocimientos</a>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        {% for message in messages %}
+        <div class="alert">{{ message }}</div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <h2 style="margin-top: 0;">Nuevo Tratamiento</h2>
+            <form method="POST">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="form-group">
+                        <label>Nombre del Tratamiento</label>
+                        <input type="text" name="name" placeholder="Ej: Minilipo" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoría</label>
+                        <input type="text" name="category" placeholder="Ej: Mínimamente Invasivo">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Descripción General</label>
+                    <textarea name="description" rows="2" placeholder="Resumen corto del procedimiento..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Beneficios (Uno por línea)</label>
+                    <textarea name="benefits" rows="3"
+                        placeholder="Ej:&#10;Resultados inmediatos&#10;Sin anestesia general"></textarea>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="form-group">
+                        <label>Duración Estimada</label>
+                        <input type="text" name="duration" placeholder="Ej: 60-90 min">
+                    </div>
+                    <div class="form-group">
+                        <label>Tiempo de Recup.</label>
+                        <input type="text" name="recovery_time" placeholder="Ej: 2-3 días">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Preparación Necesaria</label>
+                    <textarea name="preparation" rows="2" placeholder="Ej: Ayuno de 8 horas..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Zonas del Cuerpo (Ej: Abdomen, Brazos)</label>
+                    <textarea name="body_parts" rows="2" placeholder="Ej: Rostro completo&#10;Papada"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Información de Precio</label>
+                    <input type="text" name="price_info" placeholder="Ej: Desde $1,200 USD">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Agregar Tratamiento</button>
+            </form>
+        </div>
+
+        <h2 style="margin-bottom: 24px; padding-left: 10px; border-left: 4px solid var(--accent);">Catalogo de Servicios
+        </h2>
+
+        {% if not treatments %}
+        <div style="text-align: center; color: var(--text-muted); padding: 40px;">No hay tratamientos registrados aún.
+        </div>
+        {% endif %}
+
+        <div class="treatment-list">
+            {% for t in treatments %}
+            <div class="treatment-item-card">
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px;">
+                    <div>
+                        <h3 style="margin: 0; font-size: 20px;">{{ t.name }}</h3>
+                        <div
+                            style="font-size: 13px; color: var(--accent); font-weight: 600; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px;">
+                            {{ t.category }}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <span class="price-badge">{{ t.price_info }}</span>
+                        <div style="margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end;">
+                            <a href="{{ url_for('edit_treatment', id=t.id) }}" class="btn btn-secondary"
+                                style="font-size: 13px; padding: 8px 16px;">✏️ Editar</a>
+                            <a href="{{ url_for('delete_treatment', id=t.id) }}" class="btn btn-danger"
+                                onclick="return confirm('¿Eliminar este tratamiento?')">🗑️</a>
+                        </div>
+                    </div>
+                </div>
+
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 20px;">{{ t.description }}</p>
+
+                <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
+                    <div class="stat-pill"><span class="stat-icon">⏱</span> {{ t.duration }}</div>
+                    <div class="stat-pill"><span class="stat-icon">🛌</span> {{ t.recovery_time }}</div>
+                </div>
+
+                {% if t.preparation %}
+                <div
+                    style="margin-bottom: 20px; font-size: 13px; background: rgba(255,255,255,0.6); padding: 12px; border-radius: 10px; border: 1px dashed rgba(0,0,0,0.1);">
+                    <strong style="color: var(--primary);">📝 Preparación:</strong> {{ t.preparation }}
+                </div>
+                {% endif %}
+
+                {% if t.body_parts %}
+                <div
+                    style="margin-bottom: 20px; font-size: 13px; background: rgba(212, 175, 55, 0.05); padding: 12px; border-radius: 10px; border: 1px solid rgba(212, 175, 55, 0.1);">
+                    <strong style="color: var(--primary);">📍 Zonas:</strong> {{ t.body_parts }}
+                </div>
+                {% endif %}
+
+                <div class="chip-container">
+                    {% for benefit in t.benefits.split('\n') %}
+                    {% if benefit.strip() %}
+                    <span class="chip">{{ benefit }}</span>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <a href="/" class="back-link">← Volver al inicio</a>
+    </div>
+</body>
+
+</html>

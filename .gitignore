@@ -1,0 +1,13 @@
+.tmp/
+uploads/
+.env
+service_account.json
+token.json
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+instance/
+*.db
+*.log
+.vscode/
+.idea/

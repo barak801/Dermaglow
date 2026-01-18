@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dermaglow - Editar Tratamiento</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@300;400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1a1a1a;
+            --accent: #d4af37;
+            /* Rich Gold */
+            --accent-light: #f9f1d8;
+            --bg: #f3f4f6;
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.6);
+            --text: #2d2d2d;
+            --text-muted: #6b7280;
+            --danger: #ef4444;
+            --radius: 16px;
+            --shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(212, 175, 55, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(212, 175, 55, 0.05) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1,
+        h2,
+        h3 {
+            font-family: 'Outfit', sans-serif;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #333 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--primary);
+        }
+
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: var(--glass-border);
+            border-radius: var(--radius);
+            padding: 32px;
+            box-shadow: var(--shadow);
+            margin-bottom: 30px;
+            transition: transform 0.3s ease;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            font-size: 13px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 14px;
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            font-family: inherit;
+            box-sizing: border-box;
+            background: rgba(255, 255, 255, 0.5);
+            transition: all 0.3s;
+            font-size: 15px;
+            color: var(--primary);
+        }
+
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(212, 175, 55, 0.1);
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+            font-size: 14px;
+            border-left: 4px solid #0284c7;
+        }
+
+        ::placeholder {
+            color: #aaa;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="card">
+            <h2 style="margin-top: 0;">Editar Tratamiento: <span style="color: var(--accent);">{{ treatment.name
+                    }}</span></h2>
+
+            {% with messages = get_flashed_messages() %}
+            {% if messages %}
+            {% for message in messages %}
+            <div class="alert">{{ message }}</div>
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+
+            <form method="POST">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="form-group">
+                        <label>Nombre del Tratamiento</label>
+                        <input type="text" name="name" value="{{ treatment.name }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Categoría</label>
+                        <input type="text" name="category" value="{{ treatment.category or '' }}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Descripción General</label>
+                    <textarea name="description" rows="2">{{ treatment.description or '' }}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Beneficios (Uno por línea)</label>
+                    <textarea name="benefits" rows="3">{{ treatment.benefits or '' }}</textarea>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="form-group">
+                        <label>Duración Estimada</label>
+                        <input type="text" name="duration" value="{{ treatment.duration or '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Tiempo de Recup.</label>
+                        <input type="text" name="recovery_time" value="{{ treatment.recovery_time or '' }}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Preparación Necesaria</label>
+                    <textarea name="preparation" rows="2">{{ treatment.preparation or '' }}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Zonas del Cuerpo (Ej: Abdomen, Brazos)</label>
+                    <textarea name="body_parts" rows="2">{{ treatment.body_parts or '' }}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Información de Precio</label>
+                    <input type="text" name="price_info" value="{{ treatment.price_info or '' }}">
+                </div>
+
+                <div style="display: flex; gap: 12px; margin-top: 20px;">
+                    <button type="submit" class="btn btn-primary" style="flex: 1;">Guardar Cambios</button>
+                    <a href="/admin/treatments" class="btn btn-secondary">Cancelar</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+
+</html>
