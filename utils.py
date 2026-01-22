@@ -66,7 +66,7 @@ def check_calendar_conflict(service, start_time, duration_mins=60):
     events = events_result.get('items', [])
     return len(events) > 0
 
-def book_google_event(service, start_time, user_name, duration_mins=60):
+def book_google_event(service, start_time, user_name, description="", duration_mins=60):
     if not service: return "PLACEHOLDER_ID"
     
     tz_str = os.getenv('TIMEZONE', 'America/Bogota')
@@ -75,9 +75,15 @@ def book_google_event(service, start_time, user_name, duration_mins=60):
     if start_time.tzinfo is None:
         start_time = local_tz.localize(start_time)
         
-    end_time = start_time + timedelta(minutes=duration_mins)
+    try:
+        d_mins = int(duration_mins)
+    except:
+        d_mins = 60
+
+    end_time = start_time + timedelta(minutes=d_mins)
     event = {
-        'summary': f'Cita: {user_name}',
+        'summary': f'Appointment: {user_name}',
+        'description': description,
         'start': {'dateTime': start_time.isoformat(), 'timeZone': tz_str},
         'end': {'dateTime': end_time.isoformat(), 'timeZone': tz_str},
     }
@@ -117,24 +123,28 @@ def get_available_slots(service, start_date=None, num_slots=2):
     while len(slots) < num_slots and current_search_time < search_limit:
         # 1. Skip Sundays
         if current_search_time.weekday() == 6: # Sunday
-            current_search_time = (current_search_time + timedelta(days=1)).replace(hour=comm_start, minute=0)
+            current_search_time = (current_search_time + timedelta(days=1)).replace(hour=8, minute=0)
             continue
 
-        # 2. Handle Saturday (9am - 2pm based on flow.json)
-        is_saturday = current_search_time.weekday() == 5
-        sat_start = 9
-        sat_end = 14
+        # 2. Handle Business Hours (Mon-Fri: 8am-6pm, Sat: 8am-1:30pm)
+        weekday = current_search_time.weekday()
+        if weekday < 5: # Mon-Fri
+            effective_start = 8
+            effective_end = 18
+        else: # Saturday
+            effective_start = 8
+            effective_end = 13 # 1pm, then check 1:30 below
+            # Since check is hour-by-hour, we'll handle partial last hour carefully
         
-        effective_start = sat_start if is_saturday else comm_start
-        effective_end = sat_end if is_saturday else comm_end
-
         # Ensure we are within business hours
         if current_search_time.hour < effective_start:
             current_search_time = current_search_time.replace(hour=effective_start, minute=0, second=0, microsecond=0)
         elif current_search_time.hour >= effective_end:
-            # Skip to next day's comm_start
-            current_search_time = (current_search_time + timedelta(days=1)).replace(hour=comm_start, minute=0, second=0, microsecond=0)
-            continue # Re-evaluate day/skip sunday
+            # If it's Saturday 1pm, we might still have one slot if slots are 1h
+            # But flow says 1:30pm. Let's stick to hour blocks for simplicity or refine.
+            # Skip to next day's start (8am)
+            current_search_time = (current_search_time + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+            continue
             
         # Check if this slot is free
         if not check_calendar_conflict(service, current_search_time):
@@ -184,7 +194,7 @@ def sync_appointment_to_sheet(appt_data):
     sheet_name = sheets[0].get('properties', {}).get('title', 'Sheet1') if sheets else 'Sheet1'
     sheet_id = sheets[0].get('properties', {}).get('sheetId', 0) if sheets else 0
     
-    range_name = f'{sheet_name}!A:G' # Date, Time, Name, Phone, Status, EventID, Notes
+    range_name = f'{sheet_name}!A:I' # Fecha, Hora, Paciente, Cédula, WhatsApp, Email, Notas, Estado, Google ID
     
     # Check if appointment already exists (by Event ID)
     result = service.spreadsheets().values().get(
@@ -193,13 +203,21 @@ def sync_appointment_to_sheet(appt_data):
     rows = result.get('values', [])
     
     row_to_update = None
-    headers = ["Date", "Time", "Name", "Phone", "Client Notes", "Status", "Event ID"]
+    headers = ["Fecha", "Hora", "Paciente", "Cédula", "WhatsApp", "Email", "Notas", "Estado", "Google ID"]
     
-    # Check if sheet is empty and initialize headers
+    # Check if headers match and initialize if needed
+    needs_headers = False
     if not rows or len(rows) == 0:
-        print(f"Sheet '{sheet_name}' is empty. Initializing headers...")
+        needs_headers = True
+    elif rows[0] != headers:
+        # If the first row is NOT the correct headers, we might need to insert them or overwrite
+        # For clinical safety, if it's not the exact header row, we treat it as needing initialization
+        needs_headers = True
+
+    if needs_headers:
+        print(f"Sheet '{sheet_name}' headers missing or mismatched. Re-initializing...")
         service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id, range=f'{sheet_name}!A1:G1',
+            spreadsheetId=spreadsheet_id, range=f'{sheet_name}!A1:I1',
             valueInputOption='RAW', body={'values': [headers]}
         ).execute()
         
@@ -207,7 +225,7 @@ def sync_appointment_to_sheet(appt_data):
         fmt_body = {
             "requests": [{
                 "repeatCell": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 7},
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 9},
                     "cell": {
                         "userEnteredFormat": {
                             "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
@@ -225,7 +243,7 @@ def sync_appointment_to_sheet(appt_data):
         rows = result.get('values', [])
 
     for i, row in enumerate(rows):
-        if len(row) > 6 and row[6] == appt_data['google_event_id']:
+        if len(row) > 8 and row[8] == appt_data['google_event_id']:
             row_to_update = i + 1 # 1-indexed
             break
 
@@ -233,7 +251,9 @@ def sync_appointment_to_sheet(appt_data):
         appt_data['date'],
         appt_data['time'],
         appt_data['name'],
+        appt_data.get('cedula', ''),
         appt_data['phone'],
+        appt_data.get('email', ''),
         appt_data.get('notes', ''),
         appt_data['status'],
         appt_data['google_event_id']
@@ -251,7 +271,7 @@ def sync_appointment_to_sheet(appt_data):
     try:
         if row_to_update:
             # Update existing row
-            update_range = f'{sheet_name}!A{row_to_update}:G{row_to_update}'
+            update_range = f'{sheet_name}!A{row_to_update}:I{row_to_update}'
             service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id, range=update_range,
                 valueInputOption='RAW', body={'values': values}
@@ -265,11 +285,16 @@ def sync_appointment_to_sheet(appt_data):
                 valueInputOption='RAW', body={'values': values}
             ).execute()
             print(f"Appended new appointment to '{sheet_name}'")
-            # Get the index of the newly appended row
+            # Robust extraction of row number from Sheet1!A10:I10
             updated_range = append_res.get('updates', {}).get('updatedRange', '')
-            # e.g. Sheet1!A10:G10
-            # Be robust: find the last occurrence of '!A' or just split by '!A'
-            target_row_index = int(updated_range.split('!A')[-1].split(':')[0]) - 1
+            # Extract only the first sequence of digits found in the range (the row number)
+            import re
+            row_match = re.search(r'(\d+)', updated_range.split('!')[-1])
+            if row_match:
+                target_row_index = int(row_match.group(1)) - 1
+            else:
+                print(f"WARNING: Could not determine row index from {updated_range}. Formatting skipped.")
+                target_row_index = None
 
         # Apply formatting (background color)
         body = {
@@ -281,7 +306,7 @@ def sync_appointment_to_sheet(appt_data):
                             "startRowIndex": target_row_index,
                             "endRowIndex": target_row_index + 1,
                             "startColumnIndex": 0,
-                            "endColumnIndex": 7
+                            "endColumnIndex": 9
                         },
                         "cell": {
                             "userEnteredFormat": {
@@ -298,36 +323,59 @@ def sync_appointment_to_sheet(appt_data):
     except Exception as e:
         print(f"Error syncing to Google Sheets: {e}")
 
-def get_client_summary(user_id):
+def update_user_summary(user_id):
     """
-    Generates a concise summary of client history using Gemini.
+    Generates a clinical summary of the user's conversation history and saves it to the DB.
     """
-    from models import db, Message
+    from models import db, Message, User
     
-    # Fetch last 20 messages for context
-    msgs = Message.query.filter_by(user_id=user_id).order_by(Message.timestamp.desc()).limit(20).all()
+    user = User.query.get(user_id)
+    if not user: return "User not found"
+
+    # Fetch last 30 messages for a richer context
+    msgs = Message.query.filter_by(user_id=user_id).order_by(Message.timestamp.desc()).limit(30).all()
     if not msgs:
-        return "No previous history."
+        user.summary = "Inicio de contacto - Sin historial previo."
+        db.session.commit()
+        return user.summary
     
     history_text = "\n".join([f"{m.role}: {m.content}" for m in reversed(msgs)])
     
     model = genai.GenerativeModel('gemini-2.0-flash')
     prompt = f"""
-    Based on the following conversation history, write a 1-sentence summary (in SPANISH) of the client's interests, 
-    concerns, or previous treatments. Be extremely concise.
+    Eres una Coordinadora Clínica de Dermaglow. Tu tarea es resumir el perfil del paciente basado en su conversación.
     
-    History:
+    Reglas:
+    1. Enfócate en: Tratamientos de interés, preocupaciones médicas mencionadas, y detalles logísticos (si ya tiene cita o está en proceso).
+    2. Usa un tono profesional y clínico.
+    3. Máximo 2-3 oraciones breves.
+    4. Idioma: Español (Ecuador).
+    
+    Historial:
     {history_text}
     
-    Summary:
+    Resumen Clínico para la Ficha del Paciente:
     """
     
     try:
         response = model.generate_content(prompt)
-        return response.text.strip()
+        summary = response.text.strip()
+        user.summary = summary
+        db.session.commit()
+        return summary
     except Exception as e:
-        print(f"Error generating client summary: {e}")
-        return "History summary unavailable."
+        print(f"Error generating persistent summary: {e}")
+        return user.summary or "Historial disponible en mensajes."
+
+def get_client_summary(user_id):
+    """
+    Returns the saved clinical summary from the DB.
+    """
+    from models import User
+    user = User.query.get(user_id)
+    if user and user.summary:
+        return user.summary
+    return update_user_summary(user_id)
 
 def get_gemini_rag_response(user_input, system_instruction=None, context_files=[], history=[]):
     """
@@ -403,19 +451,19 @@ def verify_payment_screenshot(media_url, expected_amount):
         Analyze this screenshot to verify a deposit payment for a medical aesthetic clinic.
         Target Amount: {expected_amount}
         
-        Tasks:
+        tasks:
         1. Identify if this is a payment receipt/confirmation (Transferencia, Nequi, Daviplata, or Bank receipt).
         2. Extract the TOTAL AMOUNT paid.
-        3. Check if the amount matches {expected_amount}.
+        3. IMPORTANT: Check if the amount is EQUAL TO OR GREATER THAN $30. If it is less than $30, it is NOT valid.
         
         Return ONLY a JSON object:
-        {{
+        {
           "is_receipt": bool,
           "amount_matches": bool,
-          "amount_found": "string value found",
+          "amount_found": "numeric value",
           "currency": "string currency",
           "reason": "brief explanation"
-        }}
+        }
         """
         
         result = model.generate_content([sample_file, prompt])

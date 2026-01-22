@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
 from utils import (
-    calculate_next_business_slot, 
     get_calendar_service, 
     check_calendar_conflict, 
     book_google_event, 
@@ -11,7 +10,7 @@ from utils import (
     genai,
     sync_appointment_to_sheet,
     get_client_summary,
-    get_available_slots,
+    update_user_summary,
     verify_payment_screenshot
 )
 from datetime import datetime, timedelta
@@ -63,20 +62,21 @@ def get_flow_config():
     return full_flow
 
 def process_incoming_media(user, request_values, from_number):
-    """Phase 1: Handle images and payment verification."""
+    """Phase 1: Handle images and payment verification. Returns (skip_classification, updated_step)."""
     num_media = int(request_values.get('NumMedia', 0))
     if num_media == 0:
-        return False
+        return False, user.current_flow_step
 
     media_url = request_values.get('MediaUrl0')
     print(f"DEBUG: Image received: {media_url}")
+    current_step = user.current_flow_step
     
     pending_appt = Appointment.query.filter_by(user_id=user.id, status=AppointmentStatus.PENDING_PAYMENT, paid=False).first()
     if pending_appt:
         print(f"DEBUG: Pending appointment found. Triggering vision verification.")
         verification = verify_payment_screenshot(media_url, expected_amount="$30")
         
-        if verification.get('amount_matches') or verification.get('is_receipt'):
+        if verification.get('amount_matches') and verification.get('is_receipt'):
             pending_appt.paid = True
             pending_appt.status = AppointmentStatus.CONFIRMED
             db.session.commit()
@@ -85,22 +85,26 @@ def process_incoming_media(user, request_values, from_number):
                 'date': pending_appt.start_time.strftime('%Y-%m-%d'),
                 'time': pending_appt.start_time.strftime('%H:%M'),
                 'name': user.name or from_number,
+                'cedula': user.cedula or "",
                 'phone': from_number,
+                'email': user.email or "",
                 'status': 'PAID/CONFIRMED',
                 'google_event_id': pending_appt.google_event_id,
                 'notes': get_client_summary(user.id)
             })
             
             user.current_flow_step = 'confirmed'
-            user.temp_system_hint = "SISTEMA: El pago fue verificado con éxito. Confirma al usuario que su cita está asegurada."
+            user.temp_system_hint = "SYSTEM: Payment verified successfully ($30+). Notify the user professionally that their appointment is confirmed."
             db.session.commit()
+            current_step = 'confirmed'
         else:
-            if user.current_flow_step == 'waiting_for_payment':
-                user.temp_system_hint = f"SISTEMA: El usuario envió una imagen pero NO parece un comprobante válido. Razón: {verification.get('reason')}. Pídele amablemente que verifique."
-                db.session.commit()
-    return True
+            reason = verification.get('reason', 'No se pudo verificar el monto o el tipo de documento.')
+            user.temp_system_hint = f"SYSTEM: El usuario envió una imagen pero NO es un recibo válido de $30+. Razón: {reason}. Pida amablemente el comprobante correcto."
+            db.session.commit()
+    
+    return True, current_step
 
-def classify_intent(user, incoming_msg, current_step, flow_config, intent_defs):
+def classify_intent(user, incoming_msg, current_step, flow_config, intent_defs, flow_keys):
     """Phase 2: Use AI to determine state transition."""
     state_data = flow_config.get(current_step, {})
     possible_next = state_data.get('next_steps', {})
@@ -110,10 +114,21 @@ def classify_intent(user, incoming_msg, current_step, flow_config, intent_defs):
     history_msgs = Message.query.filter_by(user_id=user.id).order_by(Message.timestamp.desc()).limit(3).all()
     history_text = "\n".join([f"{m.role}: {m.content}" for m in reversed(history_msgs)])
     
+    SYSTEM_INTENTS = ['success', 'conflict', 'timeout', 'verified_receipt']
+    
     semantic_rules = []
     for key in possible_next:
+        if key in SYSTEM_INTENTS:
+            continue
+            
         data = intent_defs.get(key, {})
         description = data.get('description', data) if isinstance(data, dict) else data
+        
+        # Resolve placeholders in description (e.g. [DEPOSIT_VALUE])
+        if isinstance(description, str):
+            for k, v in flow_keys.items():
+                description = description.replace(f"[{k}]", str(v))
+        
         rule_entry = f"- {key}: {description}"
         semantic_rules.append(rule_entry)
     
@@ -186,6 +201,7 @@ def extract_entities(user, incoming_msg, history_text, valid_treatments, local_t
     {{
       "specific_date_time": "ISO format or null",
       "preferred_day": "YYYY-MM-DD or null",
+      "preferred_hour": "HH:MM or null",
       "name": null, "email": null, "cedula": null,
       "treatment": null
     }}
@@ -210,95 +226,115 @@ def extract_entities(user, incoming_msg, history_text, valid_treatments, local_t
     return data
 
 def handle_provide_slots(user, extraction_data, incoming_msg, found_key, local_tz):
-    """Phase 4: Business logic for 'provide_slots' state."""
+    """Phase 4: Simplified logic for 'provide_slots' state - Open Agenda."""
     hints = []
-    slots_str = ""
     if user.name and user.email:
-        hints.append(f"NOTA: Ya tenemos los datos de {user.name} ({user.email}). Confírmalos y pregunta por el día.")
+        hints.append(f"NOTE: We already have the data for {user.name} ({user.email}). Confirm them and ask for the preferred day.")
     
     if found_key == 'user_declines':
-        hints.append("SISTEMA: El usuario RECHAZÓ la propuesta. NO insistas con ese horario.")
+        hints.append("SYSTEM: The user REJECTED the proposal. DO NOT insist on that specific time.")
     
-    now_local = datetime.now(local_tz)
-    if extraction_data.get('preferred_day') == now_local.strftime('%Y-%m-%d'):
-        hints.append("SISTEMA: El usuario solicitó 'hoy'. Infórmale que no hay disponibilidad same-day.")
+    hints.append("SYSTEM: Our agenda is OPEN. Remind the user of our [WORKING_HOURS] and ask them to pick ANY time that suits them.")
+    hints.append("SYSTEM: Do not offer specific gaps. Let the user propose their preference first.")
     
-    availability_keywords = ['horarios', 'disponibles', 'agenda', 'disponibilidad', 'cuándo']
-    is_availability_request = any(k in incoming_msg.lower() for k in availability_keywords)
-    is_retry = found_key in ['user_declines', 'conflict', 'date_provided']
-    
-    if is_availability_request or is_retry:
-        service = get_calendar_service()
-        if service:
-            target_date = None
-            if extraction_data.get('preferred_day'):
-                try:
-                    target_date = local_tz.localize(datetime.strptime(extraction_data['preferred_day'], '%Y-%m-%d'))
-                except: pass
-            if not target_date:
-                target_date = now_local + timedelta(days=1)
-            
-            slots = get_available_slots(service, start_date=target_date, num_slots=2)
-            if slots:
-                slots_str = ", ".join([s.strftime('%I:%M %p').lower().lstrip('0') for s in slots])
-                day_es = DAYS_ES.get(slots[0].strftime('%A'), slots[0].strftime('%A').lower())
-                hints.append(f"SISTEMA: Disponibilidad REAL: {day_es} a las {slots_str}. Menciona estos horarios.")
-    return hints, slots_str
+    return hints
 
 def handle_attempt_booking(user, extraction_data, local_tz, now_local):
-    """Phase 4: Business logic for 'attempt_booking' state."""
-    iso_time = extraction_data.get('specific_date_time')
-    if not iso_time:
-        return ["SISTEMA: No se detectó un horario. Pide aclaración."], 'provide_slots', ""
+    """Phase 4: Simplified booking - Accepts any time within business hours."""
+    preferred_day = extraction_data.get('preferred_day')
+    preferred_hour = extraction_data.get('preferred_hour')
     
+    # If specific_date_time was provided, prefer it
+    if extraction_data.get('specific_date_time'):
+        try:
+            dt = datetime.fromisoformat(extraction_data['specific_date_time'].replace('Z', '+00:00'))
+            preferred_day = dt.strftime('%Y-%m-%d')
+            preferred_hour = dt.strftime('%H:%M')
+        except:
+            pass
+
+    # PREVENT DUPLICATE BOOKINGS: Check for existing active appointments
+    active_appt = Appointment.query.filter(
+        Appointment.user_id == user.id,
+        Appointment.status.in_([AppointmentStatus.PENDING_PAYMENT, AppointmentStatus.CONFIRMED])
+    ).first()
+    
+    if active_appt:
+        if active_appt.status == AppointmentStatus.CONFIRMED:
+            return [f"SYSTEM: Usuario ya tiene una cita CONFIRMADA para el {active_appt.start_time.strftime('%Y-%m-%d %H:%M')}. No intente reservar de nuevo."], 'confirmed'
+        else:
+            return [f"SYSTEM: Usuario ya tiene una reserva PENDIENTE para el {active_appt.start_time.strftime('%Y-%m-%d %H:%M')}. Instruya al usuario a realizar el pago."], 'waiting_for_payment'
+
+    if not preferred_day or not preferred_hour:
+        return ["SYSTEM: No se detectó un horario completo (falta día o hora). Por favor, pida al usuario que especifique cuándo desea venir."], 'provide_slots'
+
     try:
-        start_time = local_tz.localize(datetime.fromisoformat(iso_time))
-    except:
-        return ["SISTEMA: Formato de fecha inválido. Pide aclaración."], 'provide_slots', ""
-    
-    if start_time.date() <= now_local.date():
-        return ["SISTEMA: No hay citas disponibles para el mismo día. Sugiere agendar a partir de mañana o del próximo día hábil."], 'provide_slots', ""
-    
-    comm_start, comm_end = int(os.getenv('COMM_START_HOUR', 10)), int(os.getenv('COMM_END_HOUR', 22))
-    if start_time.hour < comm_start or start_time.hour >= comm_end:
-        return [f"SISTEMA: {start_time.strftime('%I:%M %p')} fuera de servicio."], 'provide_slots', ""
-    
+        dt_str = f"{preferred_day} {preferred_hour}"
+        start_time = local_tz.localize(datetime.strptime(dt_str, '%Y-%m-%d %H:%M'))
+    except Exception as e:
+        print(f"Booking Parse Error: {e}")
+        return ["SYSTEM: Formato de hora inválido. Por favor pida aclaración."], 'provide_slots'
+
+    # Validate Business Hours (Mon-Fri 8-6, Sat 8-1:30)
+    weekday = start_time.weekday()
+    is_open = False
+    if weekday < 5: # Mon-Fri
+        if 8 <= start_time.hour < 18: is_open = True
+    elif weekday == 5: # Sat
+        if 8 <= start_time.hour < 13 or (start_time.hour == 13 and start_time.minute <= 30): is_open = True
+
+    if not is_open:
+        return ["SYSTEM: El horario solicitado está FUERA de nuestra jornada laboral. Recuerde al usuario nuestro horario: [WORKING_HOURS]."], 'provide_slots'
+
+    # Simplified booking: We skip the conflict check to allow multiple professionals to attend.
     service = get_calendar_service()
-    if check_calendar_conflict(service, start_time):
-        next_slots = get_available_slots(service, start_date=start_time, num_slots=2)
-        if next_slots:
-            slots_str = ", ".join([s.strftime('%I:%M %p').lower().lstrip('0') for s in next_slots])
-            return [f"SISTEMA: Ocupado. Sugiérele: {slots_str}."], 'provide_slots', slots_str
-        return ["SISTEMA: Ocupado y sin espacios cercanos."], 'provide_slots', ""
+    event_id = "OFFLINE_SYNCC"
+    if service:
+        event_id = book_google_event(service, start_time, f"Assessment: {user.name}", f"Treatment: {user.treatment_interest or 'Not specified'}")
     
-    # Success
-    event_id = book_google_event(service, start_time, user.name or user.phone_number)
-    db.session.add(Appointment(user_id=user.id, start_time=start_time, google_event_id=event_id))
-    sync_appointment_to_sheet({
-        'date': start_time.strftime('%Y-%m-%d'), 'time': start_time.strftime('%H:%M'),
-        'name': user.name or "Paciente", 'phone': user.phone_number, 'status': 'PENDING_PAYMENT',
-        'google_event_id': event_id
-    })
-    user.current_flow_step = 'waiting_for_payment'
+    new_appt = Appointment(
+        user_id = user.id,
+        start_time = start_time,
+        google_event_id = event_id
+    )
+    db.session.add(new_appt)
     db.session.commit()
-    return [f"SISTEMA: Reserva exitosa para {start_time.strftime('%A %I:%M %p')}."], 'waiting_for_payment', ""
+
+    # Sync to Sheet
+    try:
+        sync_appointment_to_sheet({
+            'date': start_time.strftime('%Y-%m-%d'),
+            'time': start_time.strftime('%H:%M'),
+            'name': user.name or "N/A",
+            'cedula': user.cedula or "",
+            'phone': user.phone_number,
+            'email': user.email or "",
+            'status': 'PENDING_PAYMENT',
+            'google_event_id': event_id,
+            'notes': get_client_summary(user.id)
+        })
+    except Exception as e:
+        print(f"Sheet Sync Error: {e}")
+
+    return [f"SYSTEM: Reserva exitosa para el {start_time.strftime('%A %I:%M %p')}. Proceda con las instrucciones de pago."], 'waiting_for_payment'
 
 def assemble_system_prompt(user, current_step, flow_config, system_hints, flow_keys):
     """Phase 5: Assemble the final system prompt."""
     state_data = flow_config.get(current_step, {})
     instruction = state_data.get('instruction', '')
     
-    # Static Treatments info from DB
+    # Static Treatments info from DB - Hide on welcome for brevity
     treatments_str = ""
-    try:
-        treatments = Treatment.query.filter_by(is_active=True).all()
-        if treatments:
-            t_list = []
-            for t in treatments:
-                prefix = "[FOCO] " if user.treatment_interest and t.name.lower() in user.treatment_interest.lower() else ""
-                t_list.append(f"- {prefix}{t.name}: {t.description} (Precio: {t.price_info})")
-            treatments_str = "\n\nTRATAMIENTOS:\n" + "\n".join(t_list)
-    except: pass
+    if current_step != 'welcome':
+        try:
+            treatments = Treatment.query.filter_by(is_active=True).all()
+            if treatments:
+                t_list = []
+                for t in treatments:
+                    prefix = "[FOCUS] " if user.treatment_interest and t.name.lower() in user.treatment_interest.lower() else ""
+                    t_list.append(f"- {prefix}{t.name}: {t.description} (Price: {t.price_info})")
+                treatments_str = "\n\nTREATMENTS:\n" + "\n".join(t_list)
+        except: pass
 
     # Inject few-shot examples from flow.json
     examples_block = ""
@@ -311,16 +347,16 @@ def assemble_system_prompt(user, current_step, flow_config, system_hints, flow_k
             for k, v in flow_keys.items():
                 resolved_ex = resolved_ex.replace(f"[{k}]", str(v))
             resolved_examples.append(f"- {resolved_ex}")
-        examples_block = "\n\nEJEMPLOS DE RESPUESTA PARA ESTE PASO:\n" + "\n".join(resolved_examples)
+        examples_block = "\n\n[MANDATORY STYLE] Use these responses as technical and tonal anchor for this step:\n" + "\n".join(resolved_examples)
 
     # Inject persistent context
     if current_step == 'waiting_for_payment':
         latest = Appointment.query.filter_by(user_id=user.id).order_by(Appointment.created_at.desc()).first()
         if latest:
-            instruction += f"\n(CONTEXTO: Esperando depósito para cita el {latest.start_time.strftime('%Y-%m-%d %H:%M')})"
+            instruction += f"\n(CONTEXT: Waiting for deposit for appointment on {latest.start_time.strftime('%Y-%m-%d %H:%M')})"
 
     if user.treatment_interest:
-        instruction = f"[FOCO ACTUAL: {user.treatment_interest}]\n" + instruction
+        instruction = f"[CURRENT FOCUS: {user.treatment_interest}]\n" + instruction
 
     if system_hints:
         instruction += "\n\n" + "\n".join(system_hints)
@@ -371,13 +407,17 @@ def webhook():
         db.session.commit()
 
     current_step = user.current_flow_step or 'welcome'
-    skip_classification = process_incoming_media(user, request.values, from_number)
+    skip_classification, updated_step = process_incoming_media(user, request.values, from_number)
+    current_step = updated_step
     
     # PHASE 2: CLASSIFICATION
     found_key = None
+    flow_keys = full_flow.get('keys', {})
+    original_step = current_step
+    
     if not skip_classification:
         try:
-            current_step, found_key = classify_intent(user, incoming_msg, current_step, flow_config, intent_defs)
+            current_step, found_key = classify_intent(user, incoming_msg, current_step, flow_config, intent_defs, flow_keys)
             print(f"DEBUG Phase 2: Classification={found_key}, NewStep={current_step}", flush=True)
         except Exception as e: print(f"P2 Error: {e}")
 
@@ -397,19 +437,18 @@ def webhook():
             matches = [t.name for t in all_treatments if t.name.lower().split(' (')[0] in msg_lower or (len(msg_lower.split()) > 1 and msg_lower.split()[0] in t.name.lower())]
             # Hardcoded example for "Endolifting"
             if "endolifting" in msg_lower and not any(x in msg_lower for x in ["facial", "corporal"]):
-                user.temp_system_hint = "SISTEMA: El usuario mencionó 'Endolifting'. Aclara si se refiere a Endolifting Facial o Endolifting Corporal."
+                user.temp_system_hint = "SYSTEM: The user mentioned 'Endolifting'. Please clarify if they refer to Facial Endolifting or Corporal Endolifting."
                 db.session.commit()
     except Exception as e: print(f"P3 Error: {e}")
 
     # PHASE 4: LOGIC
     system_hints = []
-    slots_str = ""
     
     # Aggressive Context Injection
     if user.name:
-        system_hints.append(f"NOTA: El nombre del usuario es {user.name}. Úsalo naturalmente.")
+        system_hints.append(f"NOTE: The user's name is {user.name}. Use it naturally.")
     if user.treatment_interest:
-        system_hints.append(f"FOCO: El usuario está interesado en {user.treatment_interest}.")
+        system_hints.append(f"FOCUS: The user is interested in {user.treatment_interest}.")
     
     if user.temp_system_hint:
         system_hints.append(user.temp_system_hint)
@@ -423,22 +462,31 @@ def webhook():
             current_step = 'provide_slots'
 
         if current_step == 'provide_slots':
-            new_hints, slots_str = handle_provide_slots(user, extraction_data, incoming_msg, found_key, local_tz)
+            new_hints = handle_provide_slots(user, extraction_data, incoming_msg, found_key, local_tz)
             system_hints.extend(new_hints)
         elif current_step == 'attempt_booking' or flow_config.get(current_step, {}).get('action') == 'book_slot':
-            new_hints, next_step, slots_str = handle_attempt_booking(user, extraction_data, local_tz, now_local)
+            new_hints, next_step = handle_attempt_booking(user, extraction_data, local_tz, now_local)
             system_hints.extend(new_hints)
             current_step = next_step
+        
     except Exception as e:
         print(f"P4 Error: {e}", flush=True)
-        system_hints.append("SISTEMA: Error lógico interno.")
+        system_hints.append("SYSTEM: Internal logical error.")
+
+    # UPDATE: Save the final state after logic transitions
+    user.current_flow_step = current_step
+    db.session.commit()
 
     # PHASE 5: PROMPT & CALL
+    # Determine the visual state for the response
+    display_step = current_step
+    if original_step == 'welcome' and current_step == 'discovery' and found_key == 'user_interacted':
+        display_step = 'welcome'
+        
     flow_keys = full_flow.get('keys', {})
     flow_keys.update({
-        'NAME': user.name or "paciente", 
-        'EMAIL': user.email or "no proporcionado",
-        'NEXT_AVAILABLE_SLOTS': slots_str or "no hay horarios disponibles cercanos"
+        'NAME': user.name or "patient", 
+        'EMAIL': user.email or "not provided"
     })
     
     if current_step == 'waiting_for_payment':
@@ -447,7 +495,7 @@ def webhook():
             flow_keys['DATE'] = latest.start_time.strftime('%Y-%m-%d')
             flow_keys['TIME'] = latest.start_time.strftime('%H:%M')
 
-    instruction, treatments_str, examples_block = assemble_system_prompt(user, current_step, flow_config, system_hints, flow_keys)
+    instruction, treatments_str, examples_block = assemble_system_prompt(user, display_step, flow_config, system_hints, flow_keys)
     
     now_str = now_local.strftime('%H:%M')
     
@@ -455,38 +503,39 @@ def webhook():
     greeting_instruction = ""
     if current_step == 'welcome' or found_key == 'user_interacted':
         greeting_instruction = f"""
-    - Inicia con un saludo refinado y breve acorde a la hora (Buenos días/Buenas tardes/Buenas noches).
-    - IMPORTANTE: Si es después de las 18:00, usa "Buenas noches"."""
+    - Start with a refined and brief greeting according to the time (Good morning/Good afternoon/Good evening).
+    - IMPORTANT: If it's after 18:00, use "Buenas noches" (Spanish)."""
 
-    system_prompt = f"""[DIRECTIVA CRÍTICA DE PERSONA]
-    Eres Jesica, la concierge de élite de {flow_keys.get('CLINIC_NAME')}. 
-    Tu comunicación es la de una ejecutiva de alto nivel: elegante, sofisticada, minimalista y sumamente atenta.
-    NO eres un asistente virtual genérico. NO uses muletillas de robot.
-    
-    REGLA DE ORO DE ESTILO:
-    - Tu lenguaje es impecable y profesional.
-    - IGNORA COMPLETAMENTE el tono de los mensajes previos en el historial. Solo usa el historial para contexto factual.
-    - NUNCA uses las frases en la LISTA NEGRA.
-    
-    LISTA NEGRA (PROHIBIDO):
-    - "¿En qué puedo asistirle?"
-    - "Para asistirle mejor"
-    - "¿En qué puedo ayudarle?"
-    - "¿Tanto en qué puedo ayudarle?"
-    - "¿Desea conocer nuestra disponibilidad?"
-    - "¿Tiene alguna otra duda?"
-    - "¿Alguna otra pregunta?"
-    - "¿Desea agendar una cita?" (Usa cierres más elegantes como los ejemplos)
-    
-    CONTEXTO Y DISPONIBILIDAD:
+    system_prompt = f"""[PERSONA DIRECTIVE: EXPERT COORDINATOR]
+    You are the Patient Coordinator for {flow_keys.get('CLINIC_NAME')}. 
+    Your communication is that of a clinical expert: professional, clear, confident, and reassuring.
+    You speak with the simplicity of someone who masters their field, avoiding unnecessary adornments (corporate fluff) while maintaining clinical standards of excellence.
+
+    [LANGUAGE RULE] 
+    STRICT REQUIREMENT: You MUST ALWAYS respond in SPANISH (Ecuador dialect). 
+    While these instructions are in English, your actual output to the patient must be natural, high-level clinical Spanish.
+
+    GOLDEN STYLE RULES:
+    1. ELEVATE THE TONE: If the user is informal or enthusiastic, acknowledge their energy briefly but keep the conversation at a professional and clinical level.
+    2. DYNAMISM IN BREVITY: 
+       - Be brief and direct regarding logistics (scheduling, data, payments).
+       - Be detailed, pedagogical, and reassuring when answering questions about medical procedures or results.
+    3. NATURAL LANGUAGE: Use sophisticated Ecuadorian/neutral Spanish. Avoid English loanwords or phrases that sound like machine translation.
+
+    BLACK LIST & REPLACEMENTS (MANDATORY):
+    - FORBIDDEN: "¿En qué puedo ayudarle?" -> USE: "¿Qué información necesita sobre nuestros procedimientos?"
+    - FORBIDDEN: "¿Desea agendar una cita?" -> USE: "Podemos reservar un espacio para su valoración cuando usted guste."
+    - FORBIDDEN: Robotic fill-ins like "Para asistirle mejor" or "¿Tiene alguna otra duda?".
+
+    CONTEXT & AVAILABILITY:
     Current Time: {now_local.strftime('%A %Y-%m-%d')} {now_str}.
     {treatments_str}
-    
-    OBJETIVO ACTUAL:
+
+    CURRENT STEP OBJECTIVE:
     {instruction}
     {greeting_instruction}
-    
-    [MANDATORIO] TU RESPUESTA DEBE SEGUIR EXACTAMENTE EL TONO, ESTRUCTURA Y BREVEDAD DE ESTOS EJEMPLOS:
+
+    [MANDATORY] YOUR RESPONSE MUST STRICTLY FOLLOW THE NEW CLINICAL COORDINATOR TONE. USE THESE EXAMPLES AS AN ANCHOR:
     {examples_block}
     """
     print(f"DEBUG: System Prompt:\n{system_prompt}", flush=True)
@@ -496,11 +545,22 @@ def webhook():
     for m in reversed(recent_msgs):
         history.append({'role': 'user' if m.role == 'user' else 'model', 'parts': [m.content]})
 
-    knowledge_base = [f.gemini_name for f in KnowledgeFile.query.all() if f.gemini_name]
+    knowledge_base = []
+    if display_step != 'welcome':
+        knowledge_base = [f.gemini_name for f in KnowledgeFile.query.all() if f.gemini_name]
+        
     ai_response = get_gemini_rag_response(incoming_msg, system_prompt, knowledge_base, history)
     
     db.session.add(Message(user_id=user.id, role='agent', content=ai_response))
     db.session.commit()
+    
+    # Update persistent summary every 2 turns to keep it fresh
+    msg_count = Message.query.filter_by(user_id=user.id).count()
+    if msg_count > 0 and msg_count % 2 == 0:
+        try:
+            update_user_summary(user.id)
+        except Exception as e:
+            print(f"Summary Update Error: {e}")
     
     print(f"DEBUG: Resp: {ai_response}")
     msg.body(ai_response)
@@ -552,6 +612,69 @@ def delete_file(file_id):
     except Exception as e:
         flash(f'Error: {e}')
     return redirect(url_for('admin_upload'))
+
+@app.route('/admin/treatments', methods=['GET', 'POST'])
+@requires_auth
+def admin_treatments():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        category = request.form.get('category')
+        description = request.form.get('description')
+        benefits = request.form.get('benefits')
+        duration = request.form.get('duration')
+        recovery_time = request.form.get('recovery_time')
+        preparation = request.form.get('preparation')
+        body_parts = request.form.get('body_parts')
+        price_info = request.form.get('price_info')
+        
+        new_treatment = Treatment(
+            name=name,
+            category=category,
+            description=description,
+            benefits=benefits,
+            duration=duration,
+            recovery_time=recovery_time,
+            preparation=preparation,
+            body_parts=body_parts,
+            price_info=price_info
+        )
+        db.session.add(new_treatment)
+        db.session.commit()
+        flash('Tratamiento agregado exitosamente.')
+        return redirect(url_for('admin_treatments'))
+
+    treatments = Treatment.query.all()
+    return render_template('admin_treatments.html', treatments=treatments)
+
+@app.route('/admin/treatments/edit/<int:id>', methods=['GET', 'POST'])
+@requires_auth
+def edit_treatment(id):
+    treatment = Treatment.query.get_or_404(id)
+    if request.method == 'POST':
+        treatment.name = request.form.get('name')
+        treatment.category = request.form.get('category')
+        treatment.description = request.form.get('description')
+        treatment.benefits = request.form.get('benefits')
+        treatment.duration = request.form.get('duration')
+        treatment.recovery_time = request.form.get('recovery_time')
+        treatment.preparation = request.form.get('preparation')
+        treatment.body_parts = request.form.get('body_parts')
+        treatment.price_info = request.form.get('price_info')
+        
+        db.session.commit()
+        flash('Tratamiento actualizado.')
+        return redirect(url_for('admin_treatments'))
+    
+    return render_template('admin_treatment_edit.html', treatment=treatment)
+
+@app.route('/admin/treatments/delete/<int:id>')
+@requires_auth
+def delete_treatment(id):
+    treatment = Treatment.query.get_or_404(id)
+    db.session.delete(treatment)
+    db.session.commit()
+    flash('Tratamiento eliminado.')
+    return redirect(url_for('admin_treatments'))
 
 if __name__ == '__main__':
     with app.app_context():

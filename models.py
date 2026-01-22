@@ -20,6 +20,7 @@ class User(db.Model):
     previous_flow_step = db.Column(db.String(50)) # To track state before escalation
     treatment_interest = db.Column(db.String(100))
     temp_system_hint = db.Column(db.Text) # For transient system messages
+    summary = db.Column(db.Text) # Persistent clinical summary
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     appointments = db.relationship('Appointment', backref='user', lazy=True)

@@ -384,11 +384,13 @@
                 {% endif %}
 
                 <div class="chip-container">
+                    {% if t.benefits %}
                     {% for benefit in t.benefits.split('\n') %}
                     {% if benefit.strip() %}
                     <span class="chip">{{ benefit }}</span>
                     {% endif %}
                     {% endfor %}
+                    {% endif %}
                 </div>
             </div>
             {% endfor %}

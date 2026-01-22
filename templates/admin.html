@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dermaglow - Base de Conocimientos</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@300;400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1a1a1a;
+            --accent: #d4af37;
+            --accent-light: #f9f1d8;
+            --bg: #f3f4f6;
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.6);
+            --text: #2d2d2d;
+            --text-muted: #6b7280;
+            --danger: #ef4444;
+            --radius: 16px;
+            --shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(212, 175, 55, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(212, 175, 55, 0.05) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1,
+        h2 {
+            font-family: 'Outfit', sans-serif;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #333 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border: var(--glass-border);
+            border-radius: var(--radius);
+            padding: 32px;
+            box-shadow: var(--shadow);
+            margin-bottom: 30px;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 12px;
+            margin-bottom: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+            font-size: 14px;
+            border-left: 4px solid #0284c7;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 30px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Base de Conocimientos</h1>
+            <a href="/admin/treatments" class="btn btn-primary">🛠️ Gestión de Tratamientos</a>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        {% for message in messages %}
+        <div class="alert">{{ message }}</div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <h2 style="margin-top: 0;">Subir Nuevo Archivo</h2>
+            <form action="/admin/upload" method="POST" enctype="multipart/form-data">
+                <input type="file" name="file" required style="margin-bottom: 20px; display: block;">
+                <button type="submit" class="btn btn-primary">Subir a Gemini</button>
+            </form>
+        </div>
+
+        <h2 style="margin-bottom: 24px; padding-left: 10px; border-left: 4px solid var(--accent);">Archivos Activos</h2>
+
+        {% if not files %}
+        <div style="text-align: center; color: var(--text-muted); padding: 40px;">No hay archivos en la base de
+            conocimientos.</div>
+        {% endif %}
+
+        <div class="file-list">
+            {% for file in files %}
+            <div class="file-item">
+                <div>
+                    <div style="font-weight: 600; color: var(--primary);">{{ file.filename }}</div>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">{{ file.gemini_name }}
+                    </div>
+                </div>
+                <form action="/admin/delete-file/{{ file.id }}" method="POST" style="margin: 0;">
+                    <button type="submit" class="btn btn-danger"
+                        onclick="return confirm('¿Eliminar este archivo?')">🗑️</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+
+        <a href="/" class="back-link">← Volver al inicio</a>
+    </div>
+</body>
+
+</html>
